@@ -8,9 +8,11 @@ Garcia *et al*, 2006 (https://doi.org/10.1016/S1574-1400(06)02005-6) and
 Patriksson and van der Spoel, 2008 (http://dx.doi.org/10.1039/b716554d).
 
 # Requirements
-*Python 3.9 or above
-
-*Scipy 1.7.9
+The following was used to create and test the scheduler:
+* Python 3.9
+* Scipy 1.7.9
+* Numpy 1.21.4
+* Matplotlib 3.3.1 (optional, but required for plotting functionality)
 
 # Usage
  Simply type ```python3 scheduler.py```
