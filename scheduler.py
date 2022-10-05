@@ -11,7 +11,7 @@ KB = 8.314462618E-3
 
 class poly_function():
 
-    def __init__(self, T, eng, deg=3):
+    def __init__(self, T, eng, deg=3, print_results=True):
         '''
         Fits a polynomial of degree 'deg' with deg > 0 to energy data
 
@@ -25,25 +25,57 @@ class poly_function():
         -------
         Callable object as a function of temperature
         '''
-        self._degree = deg
-        coeff, residuals, rank, sv, rcond = np.polyfit(T, eng, self._degree, full=True)
 
+        #   create RMS polynomial fit
+        self._degree = int(deg)
+        coeff, residuals, rank, sv, rcond = np.polyfit(T, eng, self._degree, full=True)
         rrmsd = np.sqrt(residuals[0]/np.sum(eng**2))
         self._poly_coeff = np.flip(coeff)
 
+        #   R-squared coefficient (coefficient of determination)
+        SS_tot = np.sum((eng - np.mean(eng))**2)
+        self._R2 = 1.0 - residuals[0]/SS_tot
+
+        if print_results:
+            print("")
+            print(" Polynomial fit to energy data of degree {:d}".format(int(deg)))
+            for n, c in enumerate(coeff):
+                print("     a{:d} = {:12.4e}".format(n, c))
+            print("     RMSD:               {:12.4f}".format(np.sqrt(residuals[0])))
+            print("     Relative RMSD:      {:12.4f} %".format(100*rrmsd))
+            print("     R2 fit coefficient: {:12.4f}".format(self._R2))
+            print("")
+
+        #   save bounds and input data
         self._T_data = np.copy(T)
         self._eng_data = np.copy(eng)
         self.T_max = np.max(T)
         self.T_min = np.min(T)
 
+        #   outside bounds use linear functions
+        self._m_max = np.sum([n*self._poly_coeff[n]*self.T_max**(n - 1) for n in np.arange(self._degree + 1)])
+        self._m_min = np.sum([n*self._poly_coeff[n]*self.T_min**(n - 1) for n in np.arange(self._degree + 1)])
+        g_T_max = np.sum([self._poly_coeff[n]*self.T_max**n for n in np.arange(self._degree + 1)])
+        g_T_min = np.sum([self._poly_coeff[n]*self.T_min**n for n in np.arange(self._degree + 1)])
+        self._b_max = g_T_max - self._m_max*self.T_max
+        self._b_min = g_T_min - self._m_min*self.T_min
+
     def __call__(self, T):
-        powers = np.array([np.array(T)**n for n in range(self._degree + 1)]).T
-        return powers @ self._poly_coeff
+            
+        T = np.array(T)
+        powers = np.array([T**n for n in range(self._degree + 1)]).T
+        return_func = powers @ self._poly_coeff
+
+        return_func[T > self.T_max] = self._m_max*T[T > self.T_max] + self._b_max
+        return_func[T < self.T_min] = self._m_min*T[T < self.T_min] + self._b_min
+
+        return return_func
+
 
 class REMDSolver():
-    def __init__(self, temperatures, energies, stddevs) -> None:
-        self.energy_func = poly_function(temperatures, energies, 3)
-        self.sigma_func = poly_function(temperatures, stddevs, 2)
+    def __init__(self, temperatures, energies, stddevs, degree=1) -> None:
+        self.energy_func = poly_function(temperatures, energies, degree)
+        self.sigma_func = poly_function(temperatures, stddevs, degree)
 
     def R_acc(self, T2, T1):
         '''
@@ -331,6 +363,7 @@ If using -plot_exchange, then this is a GROMACS .xvg file.
     parser.add_argument('-T_max', help='Highest temperature to use in Kelvin\n\n', type=float)
     parser.add_argument('-P_acc', help='Acceptance probability between each replica (between 0 and 1)\n\n', type=float)
     parser.add_argument('-n_rep', help='Integer number of replicas to use\n\n', type=int)
+    parser.add_argument('-deg', help='Polynomial degree to fit Energy vs Temperature to (default=2)\n\n', type=int, default=2)
     parser.add_argument('-plot_exchange', help='polt the exchange rate from a GROMACS .xvg file.\nNo computations are performed, only plotting.\n\n', action='store_true')
     parser.add_argument('-plot_distros', help='polt the energy distributions from the -data file.\nNo computations are performed, only plotting.\n\n', action='store_true')
     parser.add_argument('-plot_evt', help='polt the energy vs. temperature polynomial fits.\nNo computations are performed, only plotting.\n\n', action='store_true')
@@ -344,13 +377,13 @@ If using -plot_exchange, then this is a GROMACS .xvg file.
 
     if args.plot_evt:
         data = load_energy_data(args.data).T
-        solver = REMDSolver(data[0], data[1], data[2])
+        solver = REMDSolver(data[0], data[1], data[2], args.degree)
         solver.plot_poly_fits()
         exit()
 
     if args.plot_distros:
         data = load_energy_data(args.data).T
-        solver = REMDSolver(data[0], data[1], data[2])
+        solver = REMDSolver(data[0], data[1], data[2], args.degree)
         solver.plot_gaussians()
         exit()
 
@@ -370,7 +403,7 @@ If using -plot_exchange, then this is a GROMACS .xvg file.
 
     #   import energy data with columns (temperature, mean_energy, stdev_energy)
     data = load_energy_data(args.data).T
-    solver = REMDSolver(data[0], data[1], data[2])
+    solver = REMDSolver(data[0], data[1], data[2], args.degree)
 
     if args.mode == 1:
         print(" Running in Mode 1: Fixed temperature range and P_acc")
