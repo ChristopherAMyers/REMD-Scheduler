@@ -74,7 +74,11 @@ class poly_function():
             ----------
             T: Temperature to evaluate function at
         '''
-        T = np.array(T)
+        try:
+            _temp_ = T[0]
+        except:
+            T = np.array([T], dtype=float)
+            
         powers = np.array([T**n for n in range(self._degree + 1)]).T
         return_func = powers @ self._poly_coeff
 
@@ -85,9 +89,13 @@ class poly_function():
 
 
 class REMDSolver():
-    def __init__(self, temperatures, energies, stddevs, degree=1) -> None:
-        self.energy_func = poly_function(temperatures, energies, degree)
-        self.sigma_func = poly_function(temperatures, stddevs, degree)
+    def __init__(self, temperatures, energies, stddevs, degree=1, print_status=True) -> None:
+        if print_status:
+            print(" Fitting Energy vs. Temperature")
+        self.energy_func = poly_function(temperatures, energies, degree, print_results=print_status)
+        if print_status:
+            print(" Fitting RMSD vs. Temperature")
+        self.sigma_func = poly_function(temperatures, stddevs, degree, print_results=print_status)
 
     def R_acc(self, T2, T1):
         '''
