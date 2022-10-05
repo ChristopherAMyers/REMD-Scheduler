@@ -1,10 +1,15 @@
-import matplotlib.pyplot as plt
 import sys
 import numpy as np
 from scipy import optimize
-from scipy.special import erf, erfc
+from scipy.special import erf
 import argparse
-#from openmm.openmm import NonbondedForce
+
+CAN_PLOT = False
+try:
+    import matplotlib.pyplot as plt
+    CAN_PLOT = True
+except:
+    CAN_PLOT = False
 
 #   Boltzmann's Constant in kJ/mol/K
 KB = 8.314462618E-3
@@ -39,8 +44,10 @@ class poly_function():
         if print_results:
             print("")
             print(" Polynomial fit to energy data of degree {:d}".format(int(deg)))
+            print("\n     coefficients:")
             for n, c in enumerate(coeff):
                 print("     a{:d} = {:12.4e}".format(n, c))
+            print("")
             print("     RMSD:               {:12.4f}".format(np.sqrt(residuals[0])))
             print("     Relative RMSD:      {:12.4f} %".format(100*rrmsd))
             print("     R2 fit coefficient: {:12.4f}".format(self._R2))
@@ -61,7 +68,12 @@ class poly_function():
         self._b_min = g_T_min - self._m_min*self.T_min
 
     def __call__(self, T):
-            
+        '''
+            Evaluate the function at temperature T
+            Parameters
+            ----------
+            T: Temperature to evaluate function at
+        '''
         T = np.array(T)
         powers = np.array([T**n for n in range(self._degree + 1)]).T
         return_func = powers @ self._poly_coeff
@@ -210,6 +222,11 @@ class REMDSolver():
         print(' ----------------------------------')
 
     def plot_poly_fits(self):
+        '''
+            Plot polynomial fits to energy vs. temperature
+        '''
+        if not CAN_PLOT:
+            raise ImportError("matplotlib not found: plotting is disabled")
 
         fig, ax = plt.subplots(2, 1, figsize=(6, 8))
 
@@ -241,6 +258,9 @@ class REMDSolver():
         '''
             Plot a series of normalized gaussian functions
         '''
+
+        if not CAN_PLOT:
+            raise ImportError("matplotlib not found: plotting is disabled")
 
         temps = self.energy_func._T_data
         order = np.argsort(temps)
@@ -296,6 +316,10 @@ def print_error(message, close_program=True):
         exit()
 
 def plot_exchange_rate(xvg_file):
+
+    if not CAN_PLOT:
+            raise ImportError("matplotlib not found: plotting is disabled")
+
     data = np.loadtxt(xvg_file, dtype=float)
     reps = data[:, 1:].astype(int)
 
@@ -359,11 +383,11 @@ If using -plot_exchange, then this is a GROMACS .xvg file.
 
     parser.add_argument('-mode', help=mode_text, type=int, default=1, choices=[1,2,3])
     parser.add_argument('-data', help=data_text, type=str)
-    parser.add_argument('-T_min', help='Lowest temperature to start replicas at (default=300 K)\n\n', type=float, default=300)
+    parser.add_argument('-T_min', help='Lowest temperature to start replicas at (default = 300)\n\n', type=float, default=300)
     parser.add_argument('-T_max', help='Highest temperature to use in Kelvin\n\n', type=float)
     parser.add_argument('-P_acc', help='Acceptance probability between each replica (between 0 and 1)\n\n', type=float)
     parser.add_argument('-n_rep', help='Integer number of replicas to use\n\n', type=int)
-    parser.add_argument('-deg', help='Polynomial degree to fit Energy vs Temperature to (default=2)\n\n', type=int, default=2)
+    parser.add_argument('-deg', help='Polynomial degree to fit Energy vs Temperature to (default = 2)\n\n', type=int, default=2)
     parser.add_argument('-plot_exchange', help='polt the exchange rate from a GROMACS .xvg file.\nNo computations are performed, only plotting.\n\n', action='store_true')
     parser.add_argument('-plot_distros', help='polt the energy distributions from the -data file.\nNo computations are performed, only plotting.\n\n', action='store_true')
     parser.add_argument('-plot_evt', help='polt the energy vs. temperature polynomial fits.\nNo computations are performed, only plotting.\n\n', action='store_true')
@@ -377,13 +401,13 @@ If using -plot_exchange, then this is a GROMACS .xvg file.
 
     if args.plot_evt:
         data = load_energy_data(args.data).T
-        solver = REMDSolver(data[0], data[1], data[2], args.degree)
+        solver = REMDSolver(data[0], data[1], data[2], args.deg)
         solver.plot_poly_fits()
         exit()
 
     if args.plot_distros:
         data = load_energy_data(args.data).T
-        solver = REMDSolver(data[0], data[1], data[2], args.degree)
+        solver = REMDSolver(data[0], data[1], data[2], args.deg)
         solver.plot_gaussians()
         exit()
 
@@ -403,7 +427,7 @@ If using -plot_exchange, then this is a GROMACS .xvg file.
 
     #   import energy data with columns (temperature, mean_energy, stdev_energy)
     data = load_energy_data(args.data).T
-    solver = REMDSolver(data[0], data[1], data[2], args.degree)
+    solver = REMDSolver(data[0], data[1], data[2], args.deg)
 
     if args.mode == 1:
         print(" Running in Mode 1: Fixed temperature range and P_acc")
