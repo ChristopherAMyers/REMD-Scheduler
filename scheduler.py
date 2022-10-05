@@ -26,7 +26,10 @@ class poly_function():
         Callable object as a function of temperature
         '''
         self._degree = deg
-        self._poly_coeff = np.flip(np.polyfit(T, eng, self._degree))
+        coeff, residuals, rank, sv, rcond = np.polyfit(T, eng, self._degree, full=True)
+
+        rrmsd = np.sqrt(residuals[0]/np.sum(eng**2))
+        self._poly_coeff = np.flip(coeff)
 
         self._T_data = np.copy(T)
         self._eng_data = np.copy(eng)
@@ -174,20 +177,37 @@ class REMDSolver():
             print('     Replica {:5d}:  {:8.3f}'.format(n+1, rep))
         print(' ----------------------------------')
 
-    def _plot_poly_fits(self):
-        temps = np.linspace(self.energy_func.T_min, self.energy_func.T_max, 100)
-        temps = self.energy_func._T_data
-        plt.plot(temps, self.sigma_func(temps), marker='.')
+    def plot_poly_fits(self):
+
+        fig, ax = plt.subplots(2, 1, figsize=(6, 8))
+
+        for n, eng_func in enumerate([self.energy_func, self.sigma_func]):
+    
+            t_data = eng_func._T_data
+            ax[n].scatter(t_data, eng_func._eng_data, marker='.', label='Data points')
+
+            T_min = eng_func.T_min
+            T_max = eng_func.T_max
+            dist = T_max - T_min
+            T_min -= dist*0.3
+            T_max += dist*0.3
+            temps = np.linspace(T_min, T_max, 1000)
+            ax[n].plot(temps, eng_func(temps), label='Fitted polynomial')
+
+            ax[n].set_ylabel('Energy (kJ/mol)')
+            ax[n].set_xlabel('Temperature (K)')
+            ax[n].ticklabel_format(axis="y", style="sci", scilimits=(0,0))
+            ax[n].legend()
+        
+        ax[0].set_title('Mean Energy')
+        ax[1].set_title('RMSD Energy')
+        
+        plt.tight_layout()
         plt.show()
 
-    def plot_gaussians(self, outfile='distros.png'):
+    def plot_gaussians(self):
         '''
             Plot a series of normalized gaussian functions
-
-            Parameters
-            ----------
-            energies: array of centers for the Gaussian distributions
-            sigmas: array of std. dev. for the Gaussians
         '''
 
         temps = self.energy_func._T_data
@@ -197,26 +217,39 @@ class REMDSolver():
         sigmas = self.sigma_func._eng_data[order]
 
         fig, ax = plt.subplots()
-        x_min = np.min(means)
-        x_min = x_min - np.abs(x_min)*0.
-        x_max = np.max(means)
-        x_max = x_max + np.abs(x_max)*0.
-        x_vals = np.linspace(x_min, x_max, 10000)
-
         normal = lambda x, m,s:  (1/np.sqrt(2*np.pi*s*s))*np.exp(-(x - m)**2 / (2*s*s))
 
+        print("              {:>3s}   {:>12s}  {:>12s}  {:>12s} {:>8s} ".format('', 'Temp. (K)', 'Mean E', 'Std. Dev. E', 'Expected P_acc'))
         for n, mean in enumerate(means):
-            #print("TEMP: ", n+1, temps[n])
+
+            #   determine the expected acceptance probability 
             P_acc = 0.0
             if n > 0:
                 P_acc += self.R_acc(temps[n], temps[n-1])
             if n < len(temps) - 1:
                 P_acc += self.R_acc(temps[n + 1], temps[n])
-            print("     Replica {:3d}:  {:8.2f}  {:10.4e}  {:10.4e} {:8.3f} % Estimated Swap Prob.".format(n+1, temps[n], mean, sigmas[n], P_acc*100))
+
+            print("     Replica {:3d}:  {:12.2f}  {:12.4e}  {:12.4e} {:8.3f} %".format(n+1, temps[n], mean, sigmas[n], P_acc*100))
+
+            x_min = mean - sigmas[n]*5
+            x_max = mean + sigmas[n]*5
+            x_vals = np.linspace(x_min, x_max, 1000)
             ax.plot(x_vals, normal(x_vals, mean, sigmas[n]))
         #fig.savefig(outfile)
-        #plt.show()
+
+        ax.set_xlabel('Energy (kJ/mol)')
+        ax.set_ylabel('Probability Density')
+        plt.ticklabel_format(axis="both", style="sci", scilimits=(0,0))
+        plt.show()
         plt.close()
+
+def load_energy_data(file_loc):
+    print("\n Loading energy data")
+    data = np.loadtxt(file_loc)
+    if data.shape[1] != 3:
+        raise ValueError("Energy data must be 3 columns only (Temperature, mean energy, RMSD energy)")
+    print(" Found {:d} energy lines".format(data.shape[0]))
+    return data
 
 def print_title():
     print(" ---------------------------------------------")
@@ -264,15 +297,43 @@ def plot_exchange_rate(xvg_file):
 
 if __name__ == "__main__":
     print_title()
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-data', help='Input data file', required=True, type=str)
-    parser.add_argument('-T_min', help='Lowest temperature to start replicas at', type=float, default=300)
-    parser.add_argument('-mode', help='Type of calculation to run\n stuff asdfasdf asdf asdfasdf asdf \\nasdfa sdfasd fasdfasdfasd asdfasd fasdf asdfasdf asdfa sdfas', type=int, default=1, choices=[1,2,3])
-    parser.add_argument('-T_max', help='Highest temperature to use', type=float)
-    parser.add_argument('-P_acc', help='Acceptance probability between each replica ', type=float)
-    parser.add_argument('-n_rep', help='Number of replicas to use', type=int)
-    parser.add_argument('-plot_exchange', help='polt the exchange rate from a GROMACS .xvg file', action='store_true')
-    parser.add_argument('-plot_distros', help='polt the energy distributions from the energy data file', action='store_true')
+    parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
+
+    mode_text = '''Type of calculation to run.
+
+-mode 1 makes the number of replicas the solvable quantity.
+This mode takes in a maximum temperature with -T_max and a 
+probability of swapping with -P_acc to assign the replicas
+between -T_min and -T_max.
+
+-mode 2 makes the maximum temperature the solvable quantity.
+This modes takes in an acceptance probability with -P_acc 
+and a number of replicas with -n_rep to assign a temperature 
+range that start at -T_min.
+
+-mode 3 Makes the acceptance probability the solvable 
+quantity. This mode takes in -T_max and -n_rep to determine 
+the replicas that give the maximum acceptance probability
+that fit between -T_min and -T_max.
+
+'''
+
+    data_text = '''Input file.
+If using -mode 1-3, -plot_distros, or -plot_evt, this has
+must have three columns (temperature, mean energy, RMSD energy). 
+If using -plot_exchange, then this is a GROMACS .xvg file.
+
+'''
+
+    parser.add_argument('-mode', help=mode_text, type=int, default=1, choices=[1,2,3])
+    parser.add_argument('-data', help=data_text, type=str)
+    parser.add_argument('-T_min', help='Lowest temperature to start replicas at (default=300 K)\n\n', type=float, default=300)
+    parser.add_argument('-T_max', help='Highest temperature to use in Kelvin\n\n', type=float)
+    parser.add_argument('-P_acc', help='Acceptance probability between each replica (between 0 and 1)\n\n', type=float)
+    parser.add_argument('-n_rep', help='Integer number of replicas to use\n\n', type=int)
+    parser.add_argument('-plot_exchange', help='polt the exchange rate from a GROMACS .xvg file.\nNo computations are performed, only plotting.\n\n', action='store_true')
+    parser.add_argument('-plot_distros', help='polt the energy distributions from the -data file.\nNo computations are performed, only plotting.\n\n', action='store_true')
+    parser.add_argument('-plot_evt', help='polt the energy vs. temperature polynomial fits.\nNo computations are performed, only plotting.\n\n', action='store_true')
     args = parser.parse_args()
 
     #   plot calls do not require any more checking of parameters
@@ -280,30 +341,35 @@ if __name__ == "__main__":
     if args.plot_exchange:
         plot_exchange_rate(args.data)
         exit()
-    if args.plot_distros:
-        data = np.loadtxt(args.data).T
+
+    if args.plot_evt:
+        data = load_energy_data(args.data).T
         solver = REMDSolver(data[0], data[1], data[2])
-        # solver._plot_poly_fits()
-        # exit()
+        solver.plot_poly_fits()
+        exit()
+
+    if args.plot_distros:
+        data = load_energy_data(args.data).T
+        solver = REMDSolver(data[0], data[1], data[2])
         solver.plot_gaussians()
         exit()
 
     #   no plots were called, run analysis modes
     if args.mode == 1:
         if args.T_max is None or args.P_acc is None:
-            raise print_error(' For Mode 1, both -T_max and -P_acc arguments are required')
+            print_error(' For Mode 1, both -T_max and -P_acc arguments are required')
     if args.mode == 2:
         if args.P_acc is None or args.n_rep is None:
-            raise print_error(' For Mode 2, both -P_acc and -n_rep arguments are required')
+            print_error(' For Mode 2, both -P_acc and -n_rep arguments are required')
     if args.mode == 3:
         if args.T_max is None or args.n_rep is None:
-            raise print_error(' For Mode 2, both -T_max and -n_rep arguments are required')
+            print_error(' For Mode 3, both -T_max and -n_rep arguments are required')
     if args.mode in [1, 3]:
         if args.T_min >= args.T_max:
-            raise print_error(" -T_max must be greater than -T_min (default = 300 K)")
+            print_error(" -T_max must be greater than -T_min (default = 300 K)")
 
     #   import energy data with columns (temperature, mean_energy, stdev_energy)
-    data = np.loadtxt(args.data).T
+    data = load_energy_data(args.data).T
     solver = REMDSolver(data[0], data[1], data[2])
 
     if args.mode == 1:
