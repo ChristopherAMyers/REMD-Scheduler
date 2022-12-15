@@ -107,14 +107,14 @@ class REMDSolver():
             ----------
             T2: Temperature 2 of system
             T1: Temperature 1 of system with T1 < T2
-            energy_func: callable function of temperature that returns the average energy
-            sigma_func: callable function of temperature that returns the RMSD energy
+
+            NOTE: assumes T2 > T1 and that E2 > E1
             
             Returns
             -------
             Acceptance rate between 0 and 1
-            '''
-        ''' assumes T2 > T1 and that E2 > E1'''
+        '''
+
         E2 = self.energy_func(T2)
         E1 = self.energy_func(T1)
         s2 = self.sigma_func(T2)
@@ -123,10 +123,17 @@ class REMDSolver():
         sigma_12 = np.sqrt(s1*s1 + s2*s2)   # defined in text between eq. 7 and eq. 8
         mu_12 = E2 - E1                     # defined in text between eq. 7 and eq. 8
 
-        #    the following computes eq. 9 from the paper
-        term1 = 0.5*(1 + erf(-mu_12/sigma_12))  
-        exp_term = np.exp(C*mu_12 + 0.5 * C**2 * sigma_12**2)
-        term2 = 0.5*(1 + erf((mu_12 + C*sigma_12**2)/(sigma_12*np.sqrt(2))))
+        #    the following computes eq. 9 from the paper exactly
+        term1 = 0.5*(1 + erf(-mu_12/sigma_12))
+        inside_exp = C*mu_12 + 0.5 * C**2 * sigma_12**2
+        if inside_exp < 400:
+            exp_term = np.exp(inside_exp)
+            term2 = 0.5*(1 + erf((mu_12 + C*sigma_12**2)/(sigma_12*np.sqrt(2))))
+        else:
+            #   approximation for large sigma
+            #   derived using one iteration of L'Hopital's rule
+            exp_term = np.exp(-mu_12**2/(2*sigma_12**2))*np.sqrt(2/np.pi)
+            term2 = (mu_12 - C*sigma_12**2)/(C*C*sigma_12**3)
 
         return term1 + exp_term*term2
 
